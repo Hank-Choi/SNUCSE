@@ -1,0 +1,1400 @@
+options
+{
+  //keywords can be both upper or lower case
+  IGNORE_CASE = true;
+}
+
+PARSER_BEGIN(SimpleDBMSParser)
+package kr.ac.snu.ids.PRJ1_3_2015_11923;
+import java.io.File;
+import java.io.UnsupportedEncodingException;
+import java.util.ArrayList;
+import com.sleepycat.je.Cursor;
+import com.sleepycat.je.Database;
+import com.sleepycat.je.DatabaseConfig;
+import com.sleepycat.je.DatabaseEntry;
+import com.sleepycat.je.DatabaseException;
+import com.sleepycat.je.LockMode;
+import com.sleepycat.je.OperationStatus;
+import com.sleepycat.je.Environment;
+import com.sleepycat.je.EnvironmentConfig;
+import com.sleepycat.bind.serial.StoredClassCatalog;
+import com.sleepycat.bind.serial.SerialBinding;
+import kr.ac.snu.ids.PRJ1_3_2015_11923.condition.*;
+import kr.ac.snu.ids.PRJ1_3_2015_11923.table.*;
+
+public class SimpleDBMSParser
+{
+  // Environment & Database define
+  public static Environment myDbEnvironment = null;
+
+  static Database myDatabase = null;
+
+  static Database myClassDb = null;
+
+  static DatabaseEntry key;
+
+  static DatabaseEntry value;
+
+  static StoredClassCatalog classCatalog;
+
+  static SerialBinding < Table > dataBinding;
+
+  public static void main(String args []) throws ParseException
+  {
+    /* Opening DB */
+    // Open Database Environment or if not, create one
+    EnvironmentConfig envConfig = new EnvironmentConfig();
+    envConfig.setAllowCreate(true);
+    myDbEnvironment = new Environment(new File("db/"), envConfig);
+    // Open Database or if not, create one.
+    DatabaseConfig dbConfig = new DatabaseConfig();
+    dbConfig.setAllowCreate(true);
+    dbConfig.setDeferredWrite(true);
+    myDatabase = myDbEnvironment.openDatabase(null, "sampleDatabase", dbConfig);
+    // Instantiate the class catalog
+    dbConfig.setSortedDuplicates(false);
+    myClassDb = myDbEnvironment.openDatabase(null, "classDb", dbConfig);
+    // Instantiate the class catalog
+    classCatalog = new StoredClassCatalog(myClassDb);
+    // Create the binding
+    dataBinding = new SerialBinding < Table > (classCatalog, Table.class);
+    // Project 1-1 Parser
+    SimpleDBMSParser parser = new SimpleDBMSParser(System.in);
+    // prompt when program starts
+    System.out.print("DB_2015-11923> ");
+    while (true)
+    {
+      try
+      {
+        parser.command();
+      }
+      catch (ParseException e)
+      {
+        System.out.println("Syntax error");
+        SimpleDBMSParser.ReInit(System.in);
+        // prompt after syntax error
+        System.out.print("DB_2015-11923> ");
+      }
+      catch (Exception e)
+      {
+        System.out.println(e.getMessage());
+        SimpleDBMSParser.ReInit(System.in);
+        System.out.print("DB_2015-11923> ");
+      }
+    }
+  }
+
+  //tableName을 받아 DB에 있는 table을 삭제
+  public static void dropTable(String keyString)
+  {
+    try
+    {
+      DatabaseEntry key = new DatabaseEntry(keyString.getBytes("UTF-8"));
+      myDatabase.delete(null, key);
+      myDatabase.sync();
+    }
+    catch (Exception e)
+    {
+      e.printStackTrace();
+    }
+  }
+
+  // tableName과 table을 받아 db에 저장
+  public static void storeTableInDB(String keyString, Table table)
+  {
+    try
+    {
+      // Create the DatabaseEntry for the key
+      DatabaseEntry theKey = new DatabaseEntry(keyString.getBytes("UTF-8"));
+      // Create the DatabaseEntry for the data. Use the EntryBinding object
+      // that was just created to populate the DatabaseEntry
+      DatabaseEntry theData = new DatabaseEntry();
+      dataBinding.objectToEntry(table, theData);
+      // Put it as normal
+      myDatabase.put(null, theKey, theData);
+      myDatabase.sync();
+    }
+    catch (Exception e)
+    {
+      e.printStackTrace();
+    }
+  }
+
+  //tableName으로 db에서 table을 가져온다.
+  public static Table getTableFromDB(String keyString)
+  {
+    try
+    {
+      // Create DatabaseEntry objects for the key and data
+      DatabaseEntry theKey = new DatabaseEntry(keyString.getBytes("UTF-8"));
+      DatabaseEntry theData = new DatabaseEntry();
+      // Do the get as normal
+      myDatabase.get(null, theKey, theData, LockMode.DEFAULT);
+      // Recreate the MyData object from the retrieved DatabaseEntry using
+      // the EntryBinding created above
+      return dataBinding.entryToObject(theData);
+    }
+    catch (NullPointerException e)
+    {
+      return null;
+    }
+    catch (Exception e)
+    {
+      e.printStackTrace();
+      return null;
+    }
+  }
+
+  // drop table Query가 완성됐을 때 호출
+  public static void dropTableRequest(String tableName) throws Exception
+  {
+    Table selectedTable = getTableFromDB(tableName);
+    if (selectedTable == null)
+    {
+      throw new Exception("No such table");
+    }
+    if (selectedTable.isRefered())
+    {
+      throw new Exception("Drop table has failed: '" + tableName + "' is referenced by other table");
+    }
+    // update Table.referedBy
+    for (FkDef fkDef : selectedTable.getForeignKeys())
+    {
+      Table referencedTable = getTableFromDB(fkDef.getForeignTableName());
+      referencedTable.removeReferencedBy(tableName);
+      dropTable(fkDef.getForeignTableName());
+      storeTableInDB(fkDef.getForeignTableName(), referencedTable);
+    }
+    dropTable(tableName);
+    System.out.println("'" + tableName + "' table is dropped");
+  }
+
+  public static void descTableRequest(String tableName) throws Exception
+  {
+    Table selectedTable = getTableFromDB(tableName);
+    if (selectedTable == null)
+    {
+      throw new Exception("No such table");
+    }
+    selectedTable.desc();
+  }
+
+  public static void showTablesRequest() throws Exception
+  {
+    DatabaseEntry foundKey;
+    DatabaseEntry foundValue;
+    Cursor cursor = myDatabase.openCursor(null, null);
+    try
+    {
+      foundKey = new DatabaseEntry();
+      foundValue = new DatabaseEntry();
+      // cursor 첫 data를 가리킨다.
+      if (cursor.getFirst(foundKey, foundValue, LockMode.DEFAULT) == OperationStatus.NOTFOUND)
+      {
+        throw new Exception("There is no table");
+      }
+      System.out.println("----------------");
+      // db의 key들을 추출, 출력
+      do
+      {
+        String keyString = new String(foundKey.getData(), "UTF-8");
+        System.out.println(keyString);
+      }
+      while (cursor.getNext(foundKey, foundValue, LockMode.DEFAULT) == OperationStatus.SUCCESS);
+      System.out.println("----------------");
+    }
+    catch (DatabaseException de)
+    {
+    }
+    catch (UnsupportedEncodingException e)
+    {
+      e.printStackTrace();
+    }
+    finally
+    {
+      cursor.close();
+    }
+  }
+
+  public static void insertRecordRequest(String tableName, InsertColumnValuePairs insertColumnValuePairs) throws Exception
+  {
+    Table table = getTableFromDB(tableName);
+    if (table == null)
+    {
+      throw new Exception("No such table");
+    }
+    table.insertRecord(insertColumnValuePairs);
+    System.out.println("The row is inserted");
+  }
+
+  public static void createTableRequest(String tableName, Table newTable) throws Exception
+  {
+    // newTable을 DB에 넣어도 되는지 검증
+    Table duplicatedTable = getTableFromDB(tableName);
+    if (duplicatedTable != null)
+    {
+      throw new Exception("Create table has failed: table with the same name already exists");
+    }
+    // 검증 + 정의된 constraints 적용
+    newTable.setConstraints();
+    // update Table.referedBy
+    for (FkDef fkDef : newTable.getForeignKeys())
+    {
+      Table referencedTable = getTableFromDB(fkDef.getForeignTableName());
+      referencedTable.addReferencedBy(tableName);
+      dropTable(fkDef.getForeignTableName());
+      storeTableInDB(fkDef.getForeignTableName(), referencedTable);
+    }
+    storeTableInDB(tableName, newTable);
+    System.out.println("'" + tableName + "' table is created");
+  }
+
+  public static void deleteRequest(String tableName, BooleanExpressionList whereClause) throws Exception
+  {
+    Table deleteTable = getTableFromDB(tableName);
+    deleteTable.deleteRecordsRequest(whereClause);
+  }
+
+// columnName과 tableName을 통해 해당 column이 몇번째 index에 있는지 찾는다. table이 없을 경우 -2, column이 없을 경우 -1을 반환한다.
+  public static int getIndexOfSpecificColumn(ArrayList < TableColumnTuple > columns, String columnName, String tableName) throws Exception
+  {
+    int index = - 1;
+    int tempIndex = 0;
+    boolean tableExist = false;
+    for (TableColumnTuple column : columns)
+    {
+      if (columnName.equals(column.getColumnName()))
+      {
+        if (tableName == null || tableName.equals(column.getTableName()))
+        {
+          if (index == - 1)
+          {
+            index = tempIndex;
+          }
+          else
+          {
+            throw new Exception("Where clause contains ambiguous reference");
+          }
+        }
+      }
+      if (tableName != null && tableName.equals(column.getTableName()))
+      {
+        tableExist = true;
+      }
+      tempIndex++;
+    }
+    if (!tableExist && index == - 1)
+    {
+      return - 2;
+    }
+    return index;
+  }
+
+//TableExpression 내의 FromClause,whereCluase를 받아 table의 record를 필터링한다.
+  public static RecordTable selectRequest(TableExpression tableExpression) throws Exception
+  {
+    ArrayList < ReferedTableName > fromClause = tableExpression.getFromClause();
+    BooleanExpressionList whereClause = tableExpression.getWhereClause();
+    ArrayList < ArrayList < String > > productRecords = new ArrayList();
+    ArrayList < ArrayList < String > > resultRecords = new ArrayList();
+    ArrayList < TableColumnTuple > resultColumns = new ArrayList();
+    ArrayList < Table > tables = new ArrayList();
+    ArrayList < ArrayList < String > > cartesianTempRecords = new ArrayList(new ArrayList());
+    //from 절의 테이블의 record들을 모두 찾아 Cartesian 곱을 구한다.
+    for (ReferedTableName referedTableName : fromClause)
+    {
+      Table table = getTableFromDB(referedTableName.getTableName());
+      if (table == null)
+      {
+        throw new Exception("Selection has failed: '" + referedTableName.getTableName() + "' does not exist");
+      }
+      for (Column columnInTable : table.getColumns())
+      {
+        resultColumns.add(new TableColumnTuple(columnInTable.getColumnName(), referedTableName.getAsName(), columnInTable.getDataType()));
+      }
+      ArrayList < ArrayList < String > > newRecords = table.getRecords();
+      ArrayList < ArrayList < String > > newCartesianTempRecords = new ArrayList();
+      for (ArrayList < String > cartesianTempRecord : cartesianTempRecords)
+      {
+        for (ArrayList < String > newRecord : newRecords)
+        {
+          ArrayList < String > productOfTwoArray = new ArrayList(cartesianTempRecord);
+          productOfTwoArray.addAll(newRecord);
+          newCartesianTempRecords.add(productOfTwoArray);
+        }
+      }
+      if (newRecords.isEmpty())
+      {
+        break;
+      }
+      if (cartesianTempRecords.isEmpty())
+      {
+        newCartesianTempRecords.addAll(newRecords);
+      }
+      cartesianTempRecords = newCartesianTempRecords;
+    }
+    //cartesian 곱이 끝나고 각 record를 돌면서 where.checkBooleanValue를 호출, filtering
+    productRecords = cartesianTempRecords;
+    if (whereClause != null)
+    {
+      for (ArrayList < String > productRecord : productRecords)
+      {
+        if (whereClause.checkBooleanValue(productRecord, resultColumns).isTrue())
+        {
+          resultRecords.add(productRecord);
+        }
+      }
+    }
+    else
+    {
+      resultRecords = productRecords;
+    }
+    return new RecordTable(resultColumns, resultRecords);
+  }
+
+// from,where절을 통해 추출된 records를 출력한다.
+  public static void printRecords(RecordTable recordTable, ArrayList < TableColumnTuple > selectList) throws Exception
+  {
+    ArrayList < TableColumnTuple > columns = recordTable.getColumns();
+    ArrayList < ArrayList < String > > records = recordTable.getRecords();
+    ArrayList < Integer > indexList = new ArrayList();
+    StringBuilder columnString = new StringBuilder();
+    if (records.isEmpty())
+    {
+      System.out.println("Empty Set");
+    }
+    else
+    {
+      if (selectList.isEmpty())
+      {
+        selectList = columns;
+      }
+      for (TableColumnTuple selectedColumn : selectList)
+      {
+        int index;
+        try
+        {
+          index = getIndexOfSpecificColumn(columns, selectedColumn.getColumnName(), selectedColumn.getTableName());
+        }
+        catch (Exception e)
+        {
+          String errorTableName = selectedColumn.getTableName();
+          if (errorTableName == null)
+          {
+            throw new Exception("Selection has failed: fail to resolve '" + selectedColumn.getColumnName() + "'");
+          }
+          else
+          {
+            throw new Exception("Selection has failed: fail to resolve '" + errorTableName + "." + selectedColumn.getColumnName() + "'");
+          }
+        }
+        if (index < 0)
+        {
+          String errorTableName = selectedColumn.getTableName();
+          if (errorTableName == null)
+          {
+            throw new Exception("Selection has failed: fail to resolve '" + selectedColumn.getColumnName() + "'");
+          }
+          else
+          {
+            throw new Exception("Selection has failed: fail to resolve '" + errorTableName + "." + selectedColumn.getColumnName() + "'");
+          }
+        }
+        indexList.add(index);
+        columnString.append(String.format("|%-20s", selectedColumn.getAsName()));
+      }
+      int columnSize = selectList.size();
+      printLine(columnSize);
+      System.out.println(columnString.toString() + "|");
+      printLine(columnSize);
+      for (ArrayList < String > record : records)
+      {
+        for (int recordIndex : indexList)
+        {
+          System.out.printf("|%-20s", record.get(recordIndex));
+        }
+        System.out.println("|");
+      }
+      printLine(columnSize);
+    }
+  }
+
+  public static void printLine(int columnSize)
+  {
+    for (int i = 0; i < columnSize; i++)
+    {
+      System.out.print("+--------------------");
+    }
+    System.out.println("+");
+  }
+}
+
+PARSER_END(SimpleDBMSParser)
+
+SKIP :
+{
+  < SPACE : " " >
+| < TAB : "\t" >
+| < EOL :
+    "\r\n"
+  | "\n"
+  | "\r" >
+}
+
+//key word on top of < LEGAL_IDENTIFIER > so keyword is detected first
+TOKEN : /* Keywords */
+{
+  < EXIT : "exit" >
+| < INT : "int" >
+| < CHAR : "char" >
+| < DATE : "date" >
+| < CREATE : "create" >
+| < TABLE : "table" >
+| < DROP : "drop" >
+| < DESC : "desc" >
+| < INSERT : "insert" >
+| < INTO : "into" >
+| < DELETE : "delete" >
+| < SELECT : "select" >
+| < SHOW : "show" >
+| < TABLES : "tables" >
+| < VALUES : "values" >
+| < WHERE : "where" >
+| < PRIMARY : "primary" >
+| < FOREIGN : "foreign" >
+| < KEY : "key" >
+| < REFERENCES : "references" >
+| < NULL : "null" >
+| < NOT : "not" >
+| < OR : "or" >
+| < AS : "as" >
+| < FROM : "from" >
+| < AND : "and" >
+| < IS : "is" >
+| < ASTERISK : "*" >
+}
+
+//building blocks for the functions below
+TOKEN :	 //used in functions
+{
+  < END :
+    < SEMICOLON >
+    (
+      < SPACE >
+    | < TAB >
+    )*
+    < EOL > >
+| < SEMICOLON : ";" >
+| < LEFT_PAREN : "(" >
+| < RIGHT_PAREN : ")" >
+| < COMMA : "," >
+| < PERIOD : "." >
+| < COMP_OP :
+    ">"
+  | "<"
+  | ">="
+  | "<="
+  | "!="
+  | "=" >
+| < INT_VALUE : (< SIGN >)? (< DIGIT >)+ >
+| < LEGAL_IDENTIFIER :
+    < ALPHABET >
+    (
+      < ALPHABET >
+    | < UNDERSCORE >
+    )* >
+| < DATE_VALUE : < NNNN > "-" < NN > "-" < NN > >
+| < CHAR_STRING : < QUOTE > (< NON_QUOTE_CHARACTER >)* < QUOTE > >
+}
+
+//used to make token block above
+TOKEN :	 //used to make token
+{
+  < NNNN : < DIGIT > < DIGIT > < DIGIT > < DIGIT > >
+| < NN : < DIGIT > < DIGIT > >
+| < ALPHABET : [ "a"-"z", "A"-"Z" ] >
+| < SIGN :
+    "+"
+  | "-" >
+| < DIGIT : [ "0"-"9" ] >
+| < UNDERSCORE : "_" >
+| < QUOTE : "'" >
+| < NON_QUOTE_SPECIAL_CHARACTERS :
+    "!"
+  | "@"
+  | "#"
+  | "$"
+  | "%"
+  | "^"
+  | "&"
+  | "-"
+  | "{"
+  | "}"
+  | "["
+  | "]"
+  | 
+    "~"
+  | "`"
+  | "+"
+  | "*"
+  | "_"
+  | "="
+  | "\\"
+  | "("
+  | ")"
+  | "<"
+  | ">"
+  | 
+    "?"
+  | ","
+  | "."
+  | "\n"
+  | "\t"
+  | "\r"
+  | ":"
+  | ";"
+  | "|"
+  | "/" >
+| < NON_QUOTE_CHARACTER :
+    < DIGIT >
+  | < ALPHABET >
+  | < NON_QUOTE_SPECIAL_CHARACTERS >
+  | < SPACE > >
+| < UNEXPECTED : ~[ ] >
+}
+
+void command() throws Exception :
+{}
+{
+  query()
+|
+  (
+    < EXIT >
+    (
+      < SEMICOLON >
+    | < END >
+    )
+    {
+      // Close Database
+      if (myDatabase != null) myDatabase.close();
+      if (myClassDb != null) myClassDb.close();
+      if (myDbEnvironment != null) myDbEnvironment.close();
+      System.exit(0);
+    }
+  )
+}
+
+// 각 쿼리가 ;으로 끝나기 전까지 데이터를 조작하지 않게 하기 위해 각 쿼리가 ;로 끝나도록 변경 .
+void query() throws Exception :
+{
+}
+{
+  //query returns q, which is used to print correct message by printMessage(q)
+  (
+    createTableQuery()
+  | 
+    dropTableQuery()
+  | 
+    descQuery()
+  | 
+    insertQuery()
+  | 
+    deleteQuery()
+  | 
+    selectQuery()
+  | 
+    showTablesQuery()
+  )+
+}
+
+//below regex for queries are similar to the ones in grammar file.
+/// 0. easy ones
+void dropTableQuery() throws Exception :
+{
+  String tableName;
+}
+{
+  < DROP > 
+  < TABLE > 
+  tableName = tableName()
+  (
+    (
+      //when query ends at end of line
+      < END >
+      {
+        dropTableRequest(tableName);
+        System.out.print("DB_2015-11923> ");
+      }
+    )
+  |
+    (
+      //for query sequence with semicolon concatenated with another query
+      < SEMICOLON >
+      {
+        dropTableRequest(tableName);
+      }
+    )
+  )
+}
+
+void descQuery() throws Exception :
+{
+  String tableName;
+}
+{
+  < DESC > 
+  tableName = tableName()
+  (
+    (
+      //when query ends at end of line
+      < END >
+      {
+        descTableRequest(tableName);
+        System.out.print("DB_2015-11923> ");
+      }
+    )
+  |
+    (
+      //for query sequence with semicolon concatenated with another query
+      < SEMICOLON >
+      {
+        descTableRequest(tableName);
+      }
+    )
+  )
+}
+
+void showTablesQuery() throws Exception :
+{}
+{
+  < SHOW > 
+  < TABLES >
+  (
+    (
+      //when query ends at end of line
+      < END >
+      {
+        showTablesRequest();
+        System.out.print("DB_2015-11923> ");
+      }
+    )
+  |
+    (
+      //for query sequence with semicolon concatenated with another query
+      < SEMICOLON >
+      {
+        showTablesRequest();
+      }
+    )
+  )
+}
+
+/// 0. easy ones
+/// 1. for createTableQuery()
+void createTableQuery() throws Exception :
+{
+  String tableName;
+}
+{
+  < CREATE > 
+  < TABLE > 
+  tableName = tableName()
+  {
+    Table newTable = new Table(tableName);
+  }
+  // newTable 에 Constraints definition과 column들을 저장
+  tableElementList(newTable)
+  (
+    (
+      //when query ends at end of line
+      < END >
+      {
+        createTableRequest(tableName, newTable);
+        System.out.print("DB_2015-11923> ");
+      }
+    )
+  |
+    (
+      //for query sequence with semicolon concatenated with another query
+      < SEMICOLON >
+      {
+        createTableRequest(tableName, newTable);
+      }
+    )
+  )
+}
+
+void tableElementList(Table newTable) throws Exception :
+{
+}
+{
+  < LEFT_PAREN > 
+  tableElement(newTable)
+  (
+    < COMMA > 
+    tableElement(newTable)
+  )*
+  < RIGHT_PAREN >
+}
+
+void tableElement(Table newTable) throws Exception :
+{}
+{
+  columnDefinition(newTable)
+| tableConstraintDefinition(newTable)
+}
+
+void columnDefinition(Table newTable) throws Exception :
+{
+  String columnName;
+  String dataType;
+  Token notNull = null;
+}
+{
+  columnName = columnName() 
+  dataType = dataType() 
+  (
+  < NOT > 
+  notNull = < NULL >
+  )?
+  {
+    if (newTable.checkDuplicatedColumn(columnName))
+    {
+      throw new Exception("Create table has failed: column definition is duplicated");
+    }
+    Column newColumn = new Column(columnName, dataType, notNull);
+    newTable.addColumn(newColumn);
+  }
+}
+
+void tableConstraintDefinition(Table newTable) throws Exception :
+{}
+{
+  primaryKeyConstraint(newTable)
+| referentialConstraint(newTable)
+}
+
+void primaryKeyConstraint(Table newTable) throws Exception :
+{
+  ArrayList < String > columns;
+}
+{
+  < PRIMARY > 
+  < KEY > 
+  columns = columnNameList()
+  {
+    if (newTable.getPrimaryKeys().size() > 0)
+    {
+      throw new Exception("Create table has failed: primary key definition is duplicated");
+    }
+    newTable.setPkDef(columns);
+  }
+}
+
+void referentialConstraint(Table newTable) :
+{
+  ArrayList < String > columns;
+  ArrayList < String > foreignColumns;
+  String tableName;
+}
+{
+  < FOREIGN > 
+  < KEY > 
+  columns = columnNameList() 
+  < REFERENCES > 
+  tableName = tableName() 
+  foreignColumns = columnNameList()
+  {
+    newTable.setFkDef(tableName, columns, foreignColumns);
+  }
+}
+
+ArrayList < String > columnNameList() :
+{
+  ArrayList < String > result = new ArrayList();
+  String columnName;
+}
+{
+  < LEFT_PAREN > 
+  columnName = columnName()
+  {
+    result.add(columnName);
+  }
+  (
+    < COMMA > 
+    columnName = columnName()
+    {
+      result.add(columnName);
+    }
+  )*
+  < RIGHT_PAREN >
+  {
+    return result;
+  }
+}
+
+String dataType() throws Exception :
+{
+  Token type;
+  Token size = null;
+}
+{
+  (
+    type = < INT >
+  | (
+    type = < CHAR > 
+    < LEFT_PAREN > 
+    size = < INT_VALUE > 
+    < RIGHT_PAREN >
+    )
+  | type = < DATE >
+  )
+  {
+    if (size != null && Integer.parseInt(size.image) < 1)
+    {
+      throw new Exception("Char length should be over 0");
+    }
+    return (size == null) ? type.image : type.image + "(" + size.image + ")";
+  }
+}
+
+String tableName() :
+{
+  Token result;
+}
+{
+  result = < LEGAL_IDENTIFIER >
+  {
+    return result.image;
+  }
+}
+
+String columnName() :
+{
+  Token token;
+}
+{
+  token = < LEGAL_IDENTIFIER >
+  {
+    return token.image;
+  }
+}
+
+/// 1. for createTableQuery
+/// 2. for selectQuery
+void selectQuery() throws Exception :
+{
+  ArrayList < TableColumnTuple > selectList;
+  TableExpression tableExpression;
+  RecordTable recordTable;
+}
+{
+  < SELECT > 
+  selectList = selectList() 
+  tableExpression = tableExpression()
+  (
+    (
+      //when query ends at end of line
+      < END >
+      {
+        recordTable = selectRequest(tableExpression);
+        printRecords(recordTable, selectList);
+        System.out.print("DB_2015-11923> ");
+      }
+    )
+  |
+    (
+      //for query sequence with semicolon concatenated with another query
+      < SEMICOLON >
+      {
+        recordTable = selectRequest(tableExpression);
+        printRecords(recordTable, selectList);
+      }
+    )
+  )
+}
+
+ArrayList < TableColumnTuple > selectList() :
+{
+  TableColumnTuple temp;
+  ArrayList < TableColumnTuple > selectList = new ArrayList();
+}
+{
+  (
+    < ASTERISK >
+  |
+    (
+      temp = selectedColumn()
+      {
+        selectList.add(temp);
+      }
+      (
+        < COMMA > 
+        temp = selectedColumn()
+        {
+          selectList.add(temp);
+        }
+      )*
+    )
+  )
+  {
+    return selectList;
+  }
+}
+
+TableColumnTuple selectedColumn() :
+{
+  String tableName = null;
+  String columnName;
+  String asName = null;
+}
+{
+  (
+    //tableName & columnName are same token <LEGAL_IDENITFIER >, so need to lookahead 2
+    LOOKAHEAD(2)
+    tableName = tableName() 
+    < PERIOD >
+  )?
+  columnName = columnName()
+  (
+    < AS > 
+    asName = columnName()
+  )?
+  {
+    if (asName == null)
+    {
+      return new TableColumnTuple(columnName, tableName, null);
+    }
+    else
+    {
+      return new TableColumnTuple(columnName, tableName, asName, null);
+    }
+  }
+}
+
+TableExpression tableExpression() throws Exception :
+{
+  ArrayList < ReferedTableName > fromClause;
+  BooleanExpressionList whereClause = null;
+}
+{
+  fromClause = fromClause()
+  (
+    whereClause = whereClause()
+  )?
+  {
+    return new TableExpression(fromClause, whereClause);
+  }
+}
+
+ArrayList < ReferedTableName > fromClause() :
+{
+  ArrayList < ReferedTableName > result;
+}
+{
+  < FROM > 
+  result = tableReferenceList()
+  {
+    return result;
+  }
+}
+
+ArrayList < ReferedTableName > tableReferenceList() :
+{
+  ReferedTableName temp;
+  ArrayList < ReferedTableName > result = new ArrayList();
+}
+{
+  temp = referedTable()
+  {
+    result.add(temp);
+  }
+  (
+    < COMMA > 
+    temp = referedTable()
+    {
+      result.add(temp);
+    }
+  )*
+  {
+    return result;
+  }
+}
+
+ReferedTableName referedTable() :
+{
+  String tableName = null;
+  String asName = null;
+}
+{
+  tableName = tableName()
+  (
+    < AS > 
+    asName = tableName()
+  )?
+  {
+    if (asName == null)
+    {
+      asName = tableName;
+    }
+    return new ReferedTableName(tableName, asName);
+  }
+}
+
+BooleanExpressionList whereClause() :
+{
+  BooleanExpressionList result;
+}
+{
+  < WHERE > 
+  result = booleanValueExpression()
+  {
+    return result;
+  }
+}
+
+BooleanExpressionList booleanValueExpression() :
+{
+  ArrayList < ArrayList < BooleanFactor > > booleanTerms = new ArrayList();
+  ArrayList < BooleanFactor > booleanTerm;
+}
+{
+  booleanTerm = booleanTerm()
+  {
+    booleanTerms.add(booleanTerm);
+  }
+  (
+    < OR > 
+    booleanTerm = booleanTerm()
+    {
+      booleanTerms.add(booleanTerm);
+    }
+  )*
+  {
+    return new BooleanExpressionList(booleanTerms);
+  }
+}
+
+ArrayList < BooleanFactor > booleanTerm() :
+{
+  ArrayList < BooleanFactor > booleanFactors = new ArrayList();
+  BooleanFactor booleanFactor;
+}
+{
+  booleanFactor = booleanFactor()
+  {
+    booleanFactors.add(booleanFactor);
+  }
+  (
+    < AND > 
+    booleanFactor = booleanFactor()
+    {
+      booleanFactors.add(booleanFactor);
+    }
+  )*
+  {
+    return booleanFactors;
+  }
+}
+
+BooleanFactor booleanFactor() :
+{
+  Token not = null;
+  BooleanExpression booleanTest;
+}
+{
+  (
+  not = < NOT >
+  )? 
+  booleanTest = booleanTest()
+  {
+    boolean isNot = (not != null);
+    return new BooleanFactor(isNot, booleanTest);
+  }
+}
+
+BooleanExpression booleanTest() :
+{
+  BooleanExpression booleanTest;
+}
+{
+  (
+    booleanTest = predicate()
+  | booleanTest = parenthesizedBooleanExpression()
+  )
+  {
+    return booleanTest;
+  }
+}
+
+BooleanExpressionList parenthesizedBooleanExpression() :
+{
+  BooleanExpressionList booleanValueExpression;
+}
+{
+  < LEFT_PAREN > 
+  booleanValueExpression = booleanValueExpression() 
+  < RIGHT_PAREN >
+  {
+    return booleanValueExpression;
+  }
+}
+
+Predicate predicate() :
+{
+  Predicate predicate;
+}
+{
+  //comparisonPredicate & nullPredicate can both start with tableName()< PERIOD >columnName()
+  //so need to lookahead 4
+  (
+    LOOKAHEAD(4)
+    predicate = comparisonPredicate()
+  | predicate = nullPredicate()
+  )
+  {
+    return predicate;
+  }
+}
+
+ComparisonPredicate comparisonPredicate() :
+{
+  Operand operand1;
+  Token operator;
+  Operand operand2;
+}
+{
+  operand1 = compOperand() 
+  operator = < COMP_OP > 
+  operand2 = compOperand()
+  {
+    return new ComparisonPredicate(operand1, operand2, operator.image);
+  }
+}
+
+Operand compOperand() :
+{
+  Token value = null;
+  String tableName = null;
+  String columnName = null;
+}
+{
+  (
+    value = comparableValue()
+  |
+    (
+      (
+        //tableName & columnName are same token <LEGAL_IDENITFIER >, so need to lookahead 2
+        LOOKAHEAD(2)
+        tableName = tableName() 
+        < PERIOD >
+      )?
+      columnName = columnName()
+    )
+  )
+  {
+    if (value == null)
+    {
+      Operand operand = new Operand();
+      operand.setColumn(columnName, tableName);
+      return operand;
+    }
+    else
+    {
+      int insertDatatype = value.kind;
+      String dataType = "";
+      String saveValue = "";
+      switch (insertDatatype)
+      {
+        // index test !!! lower case
+        case SimpleDBMSParser.CHAR_STRING : 
+        dataType = "char";
+        saveValue = value.image.substring(1, value.image.length() - 1);
+        break;
+        case SimpleDBMSParser.INT_VALUE : 
+        dataType = "int";
+        saveValue = value.image;
+        break;
+        case SimpleDBMSParser.DATE_VALUE : 
+        dataType = "date";
+        saveValue = value.image;
+        break;
+        default : 
+        break;
+      }
+      return new Operand(saveValue, dataType);
+    }
+  }
+}
+
+Token comparableValue() :
+{
+  Token token;
+}
+{
+  (
+    token = < INT_VALUE >
+  | token = < CHAR_STRING >
+  | token = < DATE_VALUE >
+  )
+  {
+    return token;
+  }
+}
+
+NullPredicate nullPredicate() :
+{
+  String tableName = null;
+  String columnName = null;
+  boolean nullCheck;
+}
+{
+  (
+    //tableName & columnName are same token <LEGAL_IDENITFIER >, so need to lookahead 2
+    LOOKAHEAD(2)
+    tableName = tableName() 
+    < PERIOD >
+  )?
+  columnName = columnName() 
+  nullCheck = nullOperation()
+  {
+    Operand operand = new Operand();
+    operand.setColumn(columnName, tableName);
+    return new NullPredicate(operand, nullCheck);
+  }
+}
+
+boolean nullOperation() :
+{
+  Token not = null;
+}
+{
+  < IS > 
+  (
+  not = < NOT >
+  )? 
+  < NULL >
+  {
+    return (not == null) ? true : false;
+  }
+}
+
+/// 2. for selectQuery
+/// 3. for insert,delete
+void insertQuery() throws Exception :
+{
+  Table originalTable;
+  String tableName;
+  InsertColumnValuePairs insertColumnValuePairs;
+}
+{
+  < INSERT > 
+  < INTO > 
+  tableName = tableName() 
+  insertColumnValuePairs = insertColumnsAndSource()
+  (
+    (
+      //when query ends at end of line
+      < END >
+      {
+        insertRecordRequest(tableName, insertColumnValuePairs);
+        System.out.print("DB_2015-11923> ");
+      }
+    )
+  |
+    (
+      //for query sequence with semicolon concatenated with another query
+      < SEMICOLON >
+      {
+        insertRecordRequest(tableName, insertColumnValuePairs);
+      }
+    )
+  )
+}
+
+void deleteQuery() throws Exception :
+{
+  BooleanExpressionList whereClause = null;
+  String tableName;
+}
+{
+  < DELETE > 
+  < FROM > 
+  tableName = tableName()
+  (
+    whereClause = whereClause()
+  )?
+  (
+    (
+      //when query ends at end of line
+      < END >
+      {
+        deleteRequest(tableName, whereClause);
+        System.out.print("DB_2015-11923> ");
+      }
+    )
+  |
+    (
+      //for query sequence with semicolon concatenated with another query
+      < SEMICOLON >
+      {
+        deleteRequest(tableName, whereClause);
+      }
+    )
+  )
+}
+
+InsertColumnValuePairs insertColumnsAndSource() :
+{
+  ArrayList < String > columnNameList = new ArrayList();
+  ArrayList < Token > valueList;
+}
+{
+  (
+    columnNameList = columnNameList()
+  )?
+  valueList = valueList()
+  {
+    return new InsertColumnValuePairs(columnNameList, valueList);
+  }
+}
+
+ArrayList < Token > valueList() :
+{
+  ArrayList < Token > valueList = new ArrayList();
+  Token value;
+}
+{
+  < VALUES > 
+  < LEFT_PAREN > 
+  value = value()
+  {
+    valueList.add(value);
+  }
+  (
+    < COMMA > 
+    value = value()
+    {
+      valueList.add(value);
+    }
+  )*
+  < RIGHT_PAREN >
+  {
+    return valueList;
+  }
+}
+
+Token value() :
+{
+  Token value;
+}
+{
+  (
+    value = < NULL >
+  | value = comparableValue()
+  )
+  {
+    return value;
+  }
+}
