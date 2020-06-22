@@ -1,8 +1,6 @@
 import pymysql
 
 
-
-
 class Data(object):
     def __init__(self, host='astronaut.snu.ac.kr', port=3306, student_id='20DB_2015_11923'):
         self.db = pymysql.connect(
@@ -163,6 +161,7 @@ class Data(object):
         AND audience_id IS NOT NULL
         AND ({seat_numbers_condition})
         """
+        # 입력된 좌석번호 중 실제로 있는 좌석의 수 반환:
         get_number_of_valid_seat_num_sql = f"""
         SELECT count(seat_number)
         FROM seat
@@ -213,6 +212,7 @@ class Data(object):
         print(f'Total ticket price is {total_price}')
         print()
 
+    # command 12
     def print_performances_of_building(self, building_id):
         sql = f"""
         SELECT p.ID,p.name,p.type,p.price,count(s.seat_number)
@@ -227,6 +227,7 @@ class Data(object):
         result = self.cursor.fetchall()
         print_format((('ID', 'name', 'type', 'price', 'booked'),), result)
 
+    # command 13
     def print_audiences_of_performance(self, performance_id):
         sql = f"""
         SELECT a.ID,a.name,a.gender,a.age
@@ -242,6 +243,7 @@ class Data(object):
         result = self.cursor.fetchall()
         print_format((('ID', 'name', 'gender', 'age'),), result)
 
+    # command 14
     def print_booking_status_of_performance(self, performance_id):
         sql = f"""
         SELECT seat_number,audience_id FROM seat
@@ -251,6 +253,7 @@ class Data(object):
         result = self.cursor.fetchall()
         print_format((('seat_number', 'audience_id'),), result)
 
+    # command 16
     def reset_database(self):
         while True:
             check = input('Are you sure you want to reset database? [y/n]')
@@ -307,6 +310,8 @@ class Data(object):
                 ]
                 for sql in sql_array:
                     self.cursor.execute(sql)
+                print('done!')
+                print()
                 return
             else:
                 print('Invalid input')
