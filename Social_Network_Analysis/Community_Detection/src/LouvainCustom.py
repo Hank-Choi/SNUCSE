@@ -5,7 +5,7 @@ import networkx as nx
 import matplotlib.pyplot as plt
 
 
-def CAL_dQ(communities, edges, node_s, community_s):
+def calculate_dQ(communities, edges, node_s, community_s):
     sigma_in = sum(
         [edge[2] for edge in edges if (edge[0] in communities[community_s]) & (edge[1] in communities[community_s])])
     sigma_total = sum(
@@ -20,7 +20,7 @@ def CAL_dQ(communities, edges, node_s, community_s):
     return dQ
 
 
-def Phase_First(communities_p1, nodes_p1, edges_p1):
+def first_phase(communities_p1, nodes_p1, edges_p1):
     """ Phase 1 """
     flag_changed = 1
     cnt = 0
@@ -44,7 +44,7 @@ def Phase_First(communities_p1, nodes_p1, edges_p1):
             community_d = 0
             for community_s in range(len(communities_cal)):
                 if communities_cal[community_s] != [node_s]:
-                    dQ = CAL_dQ(communities_cal, edges_p1, node_s, community_s)
+                    dQ = calculate_dQ(communities_cal, edges_p1, node_s, community_s)
                     if dQ > max_dQ:
                         community_d = community_s
                         max_dQ = dQ
@@ -69,7 +69,7 @@ def Phase_First(communities_p1, nodes_p1, edges_p1):
     return communities_p1, log_community, cnt
 
 
-def Convert_p2_to_p1(communities_p1, communities_p2_result):
+def convert_p2_to_p1(communities_p1, communities_p2_result):
     communities_resultb = []
     for community_p2 in communities_p2_result:
         tmp = []
@@ -111,12 +111,12 @@ if __name__ == '__main__':
                            ((edge[0] in communities_p1[c_1]) & (edge[1] in communities_p1[c_2]))])
                 if tmp != 0:
                     edges_p2 += [(c_1, c_2, tmp)]
-        communities_p2_result, log_community, end_cnt = Phase_First(communities_p2, nodes_p2, edges_p2)
+        communities_p2_result, log_community, end_cnt = first_phase(communities_p2, nodes_p2, edges_p2)
 
         for comm in log_community:
-            log_community_all += [Convert_p2_to_p1(communities_p1, comm)]
+            log_community_all += [convert_p2_to_p1(communities_p1, comm)]
 
-        communities_result = Convert_p2_to_p1(communities_p1, communities_p2_result)
+        communities_result = convert_p2_to_p1(communities_p1, communities_p2_result)
         communities_p1 = copy.deepcopy(communities_result)
 
     community_num_group = len(communities_result)

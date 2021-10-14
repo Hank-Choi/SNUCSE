@@ -7,7 +7,7 @@ from networkx.algorithms import community
 def girvan_newman_algorithm(G, weight):
     """ G는 원래 네트워크 g는 Edge를 한개씩 끊어나갈 네트워크 """
     g = G.copy()
-    nx.algorithms.
+
 
     """ initial """
     step = 0  # step

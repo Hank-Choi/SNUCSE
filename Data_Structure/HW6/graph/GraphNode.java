@@ -53,7 +53,7 @@ class GraphNode implements Comparable<GraphNode> {
             transferNode.setAdjacentNode(5, originalNode);
         }
         transferList.add(transferNode);
-    }//새 노드와 이름이 같은 노드가 nameList 에 존재할 때 새 노드와 이름이 같은 노드들 간에 distance 를 5로 설정한다.
+    } //새 노드와 이름이 같은 노드가 nameList 에 존재할 때 새 노드와 이름이 같은 노드들 간에 distance 를 5로 설정한다.
 
     public void doNotTransfer(int distance) { //경로를 찾을 때 출발지와 목적지의 환승시간을 0으로 설정, 경로를 찾으면 5로 복구시킨다.
         for (int i = 0; i < this.transferList.size(); ++i) {

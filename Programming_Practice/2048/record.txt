@@ -1,0 +1,9 @@
+first	lose	2900	22	207	11
+first	lose	2900	22	207	11
+first	lose	2900	22	207	11
+first	lose	1	1	1	2
+first	lose	1	2	2	2
+first	lose	2900	22	207	11
+first	lose	2900	22	207	11
+first	lose	2900	22	207	11
+hank	win	19556	232	741	24

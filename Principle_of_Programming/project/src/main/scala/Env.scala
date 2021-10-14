@@ -36,7 +36,7 @@ object Bundle {
       this
     }
     def merge(env: Env):Env = {
-      new Env(this.frames :: env.frames)
+      new Env(this.frames ::: env.frames)
     }
     def addFrame():Env ={
       frames = new Frame() :: frames
